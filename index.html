@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://www.gstatic.com https://apis.google.com; connect-src https://*.googleapis.com https://gochamaze-cho.firebaseapp.com; frame-src https://gochamaze-cho.firebaseapp.com https://accounts.google.com; style-src 'unsafe-inline'; img-src data: blob:; base-uri 'none'; form-action 'none'">
 <title>ごちゃまぜ帳</title>
 <style>
   * { box-sizing: border-box; }
@@ -74,8 +74,15 @@
 <main>
   <header>
     <h1>ごちゃまぜ帳</h1>
-    <span id="total" aria-live="polite"></span>
+    <span id="total" aria-live="polite" hidden></span>
+    <button id="logout" type="button" hidden>ログアウト</button>
   </header>
+  <section id="login-panel" class="panel">
+    <button id="login" class="primary" type="button" hidden>Googleでログイン</button>
+    <p id="auth-status" role="status">ログイン状態を確認しています…</p>
+  </section>
+  <p id="status" role="status"></p>
+  <div id="memo-app" hidden>
   <section id="composer" class="panel" aria-labelledby="composer-heading">
     <h2 id="composer-heading">メモを書く</h2>
     <form id="memo-form" novalidate>
@@ -105,7 +112,6 @@
       </details>
     </form>
   </section>
-  <p id="status" role="status"></p>
   <p id="storage-warning" class="warning" role="status" hidden>ブラウザの保存容量（目安5 MB）に近づいています。添付を減らすと空き容量を確保できます。</p>
   <details id="dashboard" class="panel">
     <summary>ダッシュボード</summary>
@@ -140,6 +146,7 @@
     </div>
     <p id="backup-status" role="status"></p>
   </section>
+  </div>
 </main>
 <dialog id="append-dialog" aria-labelledby="append-heading">
   <form id="append-form" novalidate>
@@ -158,13 +165,23 @@
   <img id="preview-image" alt="">
   <form method="dialog" class="actions"><button autofocus>閉じる</button></form>
 </dialog>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
   'use strict';
 
-  const storageKey = 'gochamaze-cho:v1';
+  const firebaseConfig = {
+    apiKey: "AIzaSyAg3Con-ojz2Xt9r0ArCMvLsNa5vStGtQE",
+    authDomain: "gochamaze-cho.firebaseapp.com",
+    projectId: "gochamaze-cho",
+    storageBucket: "gochamaze-cho.firebasestorage.app",
+    messagingSenderId: "185393336815",
+    appId: "1:185393336815:web:1d485a9f016baa7baf661a"
+  };
+  const legacyStorageKey = 'gochamaze-cho:v1';
   const defaultCategories = ['未分類', 'ダジャレ', '愚痴', '考えごと', 'ネタ', 'キャラ', 'スタンプ', 'note', '事業', 'その他'];
   const ratings = ['', '◎', '○', '△'];
-  const initialMemos = [];
   const $ = id => document.getElementById(id);
   const memoForm = $('memo-form');
   const memoBody = $('memo-body');
@@ -175,6 +192,9 @@
   const filterRating = $('filter-rating');
   const appendDialog = $('append-dialog');
   const dateFormat = new Intl.DateTimeFormat('ja-JP', {dateStyle: 'medium', timeStyle: 'short'});
+  let auth;
+  let db;
+  let session;
   let data;
   let editingId = null;
   let appendingId = null;
@@ -203,31 +223,77 @@
     toastTimer = setTimeout(() => { $('status').textContent = ''; }, 3500);
   }
 
-  function storeData(next) {
-    try {
-      const serialized = JSON.stringify(next);
-      localStorage.setItem(storageKey, serialized);
-      data = next;
-      updateStorageWarning(serialized);
-      return true;
-    } catch {
-      return false;
+  function readLocalData(key) {
+    const stored = localStorage.getItem(key);
+    updateStorageWarning(stored ?? '');
+    if (stored !== null) {
+      const {categories, attachments} = JSON.parse(stored);
+      return {categories, attachments: new Map(attachments)};
     }
+    const legacy = localStorage.getItem(legacyStorageKey);
+    const categories = legacy === null ? [] : JSON.parse(legacy)?.categories;
+    return {categories: Array.isArray(categories) ? categories.filter(validText) : [], attachments: new Map()};
   }
 
-  function initialize() {
-    const stored = localStorage.getItem(storageKey);
-    if (stored !== null) {
-      data = parseBackup(stored);
-      updateStorageWarning(stored);
-      return;
+  function storeLocalData(active, local) {
+    const serialized = JSON.stringify({categories: local.categories, attachments: [...local.attachments]});
+    localStorage.setItem(active.key, serialized);
+    active.local = local;
+    if (session === active) updateStorageWarning(serialized);
+  }
+
+  function memoFields({title, body, category, tags, rating, note, createdAt, updatedAt}) {
+    return {title, body, category, tags, rating, note, createdAt, updatedAt};
+  }
+
+  function renderSnapshot(active) {
+    data = {
+      version: 1,
+      categories: active.local.categories,
+      memos: active.docs.map(doc => ({
+        ...memoFields(doc.data()),
+        id: doc.id,
+        attachments: active.local.attachments.get(doc.id) ?? []
+      }))
+    };
+    refreshOptions();
+    renderList(active.newId);
+    renderDashboard();
+  }
+
+  function activeSession() {
+    if (data && session && session.uid === auth.currentUser?.uid && !session.busy) return session;
+  }
+
+  async function saveChanges(active, categories, memos, write) {
+    const previous = active.local;
+    const attachments = new Map(previous.attachments);
+    for (const {id, attachments: files} of memos) {
+      if (files?.length) attachments.set(id, files);
+      else attachments.delete(id);
     }
-    const now = Date.now();
-    const memos = initialMemos.map((memo, index) => {
-      const timestamp = new Date(now - index).toISOString();
-      return {...memo, createdAt: timestamp, updatedAt: timestamp};
-    });
-    if (!storeData({version: 1, categories: [], memos})) throw new Error('storage');
+    const changed = JSON.stringify([...previous.attachments]) !== JSON.stringify([...attachments]) ||
+      categories !== previous.categories;
+    if (changed) storeLocalData(active, {categories, attachments});
+    try {
+      await write();
+    } catch (error) {
+      if (changed) storeLocalData(active, previous);
+      if (session === active && data) renderSnapshot(active);
+      throw error;
+    }
+    if (changed && session === active && data) renderSnapshot(active);
+  }
+
+  async function runWrite(active, write) {
+    active.busy = true;
+    $('memo-app').inert = true;
+    try {
+      await write();
+    } finally {
+      active.busy = false;
+      if (session === active) $('memo-app').inert = false;
+    }
   }
 
   function parseBackup(source) {
@@ -560,27 +626,25 @@
     appendDialog.showModal();
   }
 
-  function updateMemo(memo, nextMemo) {
-    return data.memos.map(item => item.id === memo.id ? nextMemo : item);
-  }
-
-  function deleteMemo(memo) {
-    if (!confirm('「' + displayTitle(memo) + '」を削除しますか？')) return;
-    if (!storeData({...data, memos: data.memos.filter(item => item.id !== memo.id)})) {
-      notify('削除を保存できませんでした。' + storageAdvice);
-      return;
+  async function deleteMemo(memo) {
+    const active = activeSession();
+    if (!active || !confirm('「' + displayTitle(memo) + '」を削除しますか？')) return;
+    try {
+      await runWrite(active, () => saveChanges(active, active.local.categories, [{id: memo.id}],
+        () => active.collection.doc(memo.id).delete()));
+      if (session !== active) return;
+      if (editingId === memo.id) resetComposer();
+      notify('メモを削除しました。');
+    } catch {
+      if (session === active) notify('削除を保存できませんでした。通信やブラウザの保存設定を確認してください。');
     }
-    if (editingId === memo.id) resetComposer();
-    refreshOptions();
-    renderList();
-    renderDashboard();
-    notify('メモを削除しました。');
   }
 
-  memoForm.addEventListener('submit', event => {
+  memoForm.addEventListener('submit', async event => {
     event.preventDefault();
+    const active = activeSession();
     const error = $('memo-error');
-    if (!data || processingFiles) return;
+    if (!active || processingFiles) return;
     if (!validText(memoBody.value)) {
       error.textContent = '本文を入力してください。';
       memoBody.setAttribute('aria-invalid', 'true');
@@ -592,6 +656,10 @@
     const selectedCategory = adding ? customCategory.value.trim() : category.value.slice('category:'.length);
     const categoryName = selectedCategory || '未分類';
     const previous = data.memos.find(memo => memo.id === editingId);
+    if (editingId !== null && !previous) {
+      error.textContent = 'このメモは削除されています。';
+      return;
+    }
     const now = new Date().toISOString();
     const memo = {
       id: previous?.id ?? Array.from(crypto.getRandomValues(new Uint32Array(4)), value => value.toString(16).padStart(8, '0')).join(''),
@@ -605,22 +673,27 @@
       updatedAt: now,
       attachments: draftFiles
     };
-    const memos = previous ? updateMemo(previous, memo) : [memo, ...data.memos];
     const categories = adding && !categoryOptions().includes(categoryName) ? [...data.categories, categoryName] : data.categories;
-    if (!storeData({...data, categories, memos})) {
-      error.textContent = '保存できませんでした。' + storageAdvice;
-      return;
+    const ref = active.collection.doc(memo.id);
+    active.newId = previous ? undefined : memo.id;
+    try {
+      await runWrite(active, () => saveChanges(active, categories, [memo],
+        () => previous ? ref.update(memoFields(memo)) : ref.set(memoFields(memo))));
+      if (session !== active) return;
+      resetComposer();
+      notify(previous ? '変更を保存しました。' : 'メモを保存しました。');
+      memoBody.focus();
+    } catch {
+      if (session === active) error.textContent = '保存できませんでした。通信状況を確認してください。' + storageAdvice;
+    } finally {
+      active.newId = undefined;
     }
-    refreshOptions();
-    resetComposer();
-    renderList(previous ? undefined : memo.id);
-    renderDashboard();
-    notify(previous ? '変更を保存しました。' : 'メモを保存しました。');
-    memoBody.focus();
   });
 
-  $('append-form').addEventListener('submit', event => {
+  $('append-form').addEventListener('submit', async event => {
     event.preventDefault();
+    const active = activeSession();
+    if (!active) return;
     const input = $('append-body');
     const error = $('append-error');
     if (!validText(input.value)) {
@@ -629,19 +702,26 @@
       return;
     }
     const memo = data.memos.find(item => item.id === appendingId);
-    if (!memo) return;
-    const nextMemo = {...memo, body: memo.body + '\n\n' + input.value, updatedAt: new Date().toISOString()};
-    if (!storeData({...data, memos: updateMemo(memo, nextMemo)})) {
-      error.textContent = '追記を保存できませんでした。' + storageAdvice;
+    if (!memo) {
+      error.textContent = 'このメモは削除されています。';
       return;
     }
-    if (editingId === memo.id) {
-      memoBody.value += '\n\n' + input.value;
+    const suffix = '\n\n' + input.value;
+    const ref = active.collection.doc(memo.id);
+    try {
+      await runWrite(active, () => db.runTransaction(async transaction => {
+        if (auth.currentUser?.uid !== active.uid) throw new Error('signed out');
+        const doc = await transaction.get(ref);
+        if (!doc.exists) throw new Error('memo deleted');
+        transaction.update(ref, {body: doc.data().body + suffix, updatedAt: new Date().toISOString()});
+      }));
+      if (session !== active) return;
+      if (editingId === memo.id) memoBody.value += suffix;
+      appendDialog.close();
+      notify('追記を保存しました。');
+    } catch {
+      if (session === active) error.textContent = '追記を保存できませんでした。メモの状態や通信状況を確認してください。';
     }
-    appendDialog.close();
-    renderList();
-    renderDashboard();
-    notify('追記を保存しました。');
   });
 
   category.addEventListener('change', () => {
@@ -660,7 +740,7 @@
   });
 
   $('export').addEventListener('click', () => {
-    if (!data) return;
+    if (!activeSession()) return;
     const blob = new Blob([JSON.stringify(data, null, 2) + '\n'], {type: 'application/json'});
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -676,37 +756,136 @@
   importFile.addEventListener('change', async () => {
     const file = importFile.files[0];
     importFile.value = '';
-    if (!file || !data) return;
+    const active = activeSession();
+    if (!file || !active) return;
     const status = $('backup-status');
     let incoming;
     try {
       incoming = parseBackup(await file.text());
     } catch {
+      if (session !== active) return;
       status.textContent = '読み込めませんでした。ごちゃまぜ帳から書き出したJSONを選んでください。';
       return;
     }
-    const memos = new Map(data.memos.map(memo => [memo.id, memo]));
-    for (const memo of incoming.memos) memos.set(memo.id, memo);
+    if (activeSession() !== active) return;
+    const memos = [...new Map(incoming.memos.map(memo => [memo.id, memo])).values()];
     const categories = [...new Set([...data.categories, ...incoming.categories])];
-    if (!storeData({...data, categories, memos: [...memos.values()]})) {
-      status.textContent = '読み込んだデータを保存できませんでした。' + storageAdvice;
+    let imported = 0;
+    try {
+      // Firestore のバッチ上限を超えるバックアップは分割する。
+      await runWrite(active, async () => {
+        do {
+          if (session !== active || auth.currentUser?.uid !== active.uid) return;
+          const chunk = memos.slice(imported, imported + 500);
+          const batch = db.batch();
+          for (const memo of chunk) batch.set(active.collection.doc(memo.id), memoFields(memo));
+          await saveChanges(active, categories, chunk, () => chunk.length ? batch.commit() : Promise.resolve());
+          imported += chunk.length;
+        } while (imported < memos.length);
+      });
+      if (session !== active) return;
+      if (memos.some(memo => memo.id === editingId)) resetComposer();
+      status.textContent = imported + '件を読み込みました。';
+    } catch {
+      if (session === active) {
+        status.textContent = imported + '件を保存しました。残りを読み込めませんでした。通信状況を確認してください。' + storageAdvice;
+      }
+    }
+  });
+
+  const login = $('login');
+  const logout = $('logout');
+  const authStatus = $('auth-status');
+
+  function clearSession() {
+    session?.unsubscribe?.();
+    session = undefined;
+    data = undefined;
+    $('memo-app').hidden = true;
+    $('memo-app').inert = false;
+    $('login-panel').hidden = false;
+    $('total').hidden = true;
+    resetComposer();
+    appendDialog.close();
+    preview.close();
+    appendingId = null;
+    todayDate = todayMemoId = undefined;
+    $('preview-image').removeAttribute('src');
+    $('preview-image').alt = '';
+    for (const id of ['memo-list', 'append-context', 'today-title', 'today-body', 'category-totals',
+      'rating-totals', 'top-tags', 'activity', 'count', 'total', 'backup-status', 'status',
+      'category', 'filter-category', 'filter-tag', 'filter-rating', 'draft-files']) $(id).replaceChildren();
+    $('append-body').value = $('query').value = '';
+  }
+
+  function handleAuth(user) {
+    if (user?.uid !== auth.currentUser?.uid) return;
+    clearSession();
+    login.hidden = Boolean(user);
+    logout.hidden = !user;
+    if (!user) {
+      authStatus.textContent = '';
       return;
     }
-    if (incoming.memos.some(memo => memo.id === editingId)) resetComposer();
-    refreshOptions();
-    renderList();
-    renderDashboard();
-    status.textContent = incoming.memos.length + '件を読み込みました。';
+    authStatus.textContent = 'メモを同期しています…';
+    const active = {
+      uid: user.uid,
+      key: 'gochamaze-cho:v3:' + user.uid,
+      collection: db.collection('users').doc(user.uid).collection('memos')
+    };
+    session = active;
+    try {
+      active.local = readLocalData(active.key);
+    } catch {
+      authStatus.textContent = '端末内の保存データを開けませんでした。ブラウザの保存設定を確認してください。';
+      return;
+    }
+    active.unsubscribe = active.collection.onSnapshot({includeMetadataChanges: true}, snapshot => {
+      if (session !== active || auth.currentUser?.uid !== active.uid || (!data && snapshot.metadata.fromCache)) return;
+      active.docs = snapshot.docs;
+      renderSnapshot(active);
+      $('memo-app').hidden = false;
+      $('login-panel').hidden = true;
+      $('total').hidden = false;
+    }, () => {
+      if (session !== active) return;
+      clearSession();
+      authStatus.textContent = 'メモを同期できませんでした。通信状況を確認し、ページを再読み込みしてください。';
+    });
+  }
+
+  login.addEventListener('click', async () => {
+    login.disabled = true;
+    authStatus.textContent = '';
+    try {
+      await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    } catch {
+      authStatus.textContent = 'ログインできませんでした。ポップアップの設定や通信状況を確認してください。';
+    } finally {
+      login.disabled = false;
+    }
+  });
+
+  logout.addEventListener('click', async () => {
+    logout.disabled = true;
+    clearSession();
+    try {
+      await auth.signOut();
+    } catch {
+      handleAuth(auth.currentUser);
+      notify('ログアウトできませんでした。');
+    } finally {
+      logout.disabled = false;
+    }
   });
 
   try {
-    initialize();
-    refreshOptions();
-    renderList();
-    renderDashboard();
+    firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    db = firebase.firestore();
+    auth.onAuthStateChanged(handleAuth);
   } catch {
-    $('status').textContent = '保存データを開けませんでした。ブラウザの保存設定を確認してください。';
-    for (const control of document.querySelectorAll('button, input, textarea, select')) control.disabled = true;
+    authStatus.textContent = 'Firebase に接続できませんでした。通信状況を確認し、ページを再読み込みしてください。';
   }
 </script>
 </body>
