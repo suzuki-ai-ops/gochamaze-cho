@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://www.gstatic.com https://apis.google.com; connect-src https://*.googleapis.com https://gochamaze-cho.firebaseapp.com; frame-src https://gochamaze-cho.firebaseapp.com https://accounts.google.com; style-src 'unsafe-inline'; img-src data: blob:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://www.gstatic.com https://apis.google.com; connect-src https://*.googleapis.com https://gochamaze-cho.firebaseapp.com; frame-src https://gochamaze-cho.firebaseapp.com https://accounts.google.com; style-src 'unsafe-inline'; worker-src 'self'; img-src data: blob:; base-uri 'none'; form-action 'none'">
 <title>ごちゃまぜ帳</title>
 <style>
   * { box-sizing: border-box; }
@@ -40,6 +40,7 @@
   #append-context { overflow-wrap: anywhere; }
   .backup { margin-top: 1.25rem; }
   header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: 0 0 1.1rem; }
+  #sync-status { flex-basis: 100%; margin: 0; }
   #total { background: #ede5fd; color: #44307c; border-radius: 2rem; padding: .35rem .85rem; font-weight: 650; }
   #composer { border-color: #d9c9fa; box-shadow: 0 8px 26px #593ca519; }
   #memo-body { background: #fcfaff; border: 2px solid #b6a2e1; min-height: 8.5rem; font-size: 1.1rem; }
@@ -76,6 +77,7 @@
     <h1>ごちゃまぜ帳</h1>
     <span id="total" aria-live="polite" hidden></span>
     <button id="logout" type="button" hidden>ログアウト</button>
+    <small id="sync-status" role="status" hidden></small>
   </header>
   <section id="login-panel" class="panel">
     <button id="login" class="primary" type="button" hidden>Googleでログイン</button>
@@ -292,12 +294,16 @@
 
   async function runWrite(active, write) {
     active.busy = true;
+    updateSyncStatus();
     $('memo-app').inert = true;
     try {
       await write();
     } finally {
       active.busy = false;
-      if (session === active) $('memo-app').inert = false;
+      if (session === active) {
+        $('memo-app').inert = false;
+        updateSyncStatus();
+      }
     }
   }
 
@@ -873,10 +879,32 @@
   const login = $('login');
   const logout = $('logout');
   const authStatus = $('auth-status');
+  const syncStatus = $('sync-status');
+
+  function updateSyncStatus() {
+    if (!session) {
+      syncStatus.hidden = true;
+      syncStatus.textContent = '';
+      return;
+    }
+    const metadata = session.metadata;
+    let message = '同期済み';
+    if (!navigator.onLine) {
+      message = 'オフライン（端末内データを表示中）';
+    } else if (!metadata || metadata.fromCache || metadata.hasPendingWrites || session.busy) {
+      message = '同期中…';
+    }
+    syncStatus.hidden = false;
+    if (syncStatus.textContent !== message) syncStatus.textContent = message;
+  }
+
+  window.addEventListener('online', updateSyncStatus);
+  window.addEventListener('offline', updateSyncStatus);
 
   function clearSession() {
     session?.unsubscribe?.();
     session = undefined;
+    updateSyncStatus();
     data = undefined;
     $('memo-app').hidden = true;
     $('memo-app').inert = false;
@@ -908,7 +936,7 @@
       authStatus.textContent = '';
       return;
     }
-    authStatus.textContent = 'メモを同期しています…';
+    authStatus.textContent = '';
     const active = {
       uid: user.uid,
       key: 'gochamaze-cho:v3:' + user.uid,
@@ -921,6 +949,7 @@
       authStatus.textContent = '端末内の保存データを開けませんでした。ブラウザの保存設定を確認してください。';
       return;
     }
+    updateSyncStatus();
     if (!active.local.legacyImported) {
       active.legacyBackup = readLegacyBackup();
       if (active.legacyBackup) {
@@ -929,9 +958,13 @@
       }
     }
     active.unsubscribe = active.collection.onSnapshot({includeMetadataChanges: true}, snapshot => {
-      if (session !== active || auth.currentUser?.uid !== active.uid || (!data && snapshot.metadata.fromCache)) return;
-      active.docs = snapshot.docs;
-      renderSnapshot(active);
+      if (!isCurrentSession(active)) return;
+      active.metadata = snapshot.metadata;
+      updateSyncStatus();
+      if (!data || snapshot.docChanges().length) {
+        active.docs = snapshot.docs;
+        renderSnapshot(active);
+      }
       $('memo-app').hidden = false;
       $('login-panel').hidden = true;
       $('total').hidden = false;
@@ -967,13 +1000,28 @@
     }
   });
 
-  try {
-    firebase.initializeApp(firebaseConfig);
-    auth = firebase.auth();
-    db = firebase.firestore();
-    auth.onAuthStateChanged(handleAuth);
-  } catch {
-    authStatus.textContent = 'Firebase に接続できませんでした。通信状況を確認し、ページを再読み込みしてください。';
+  async function initializeFirebase() {
+    try {
+      firebase.initializeApp(firebaseConfig);
+      auth = firebase.auth();
+      db = firebase.firestore();
+      try {
+        await db.enablePersistence({synchronizeTabs: true});
+      } catch (error) {
+        // 永続化を利用できない場合は Firestore のメモリキャッシュで続行する。
+        console.warn('Firestore のローカル永続化を有効にできませんでした。', error);
+      }
+      auth.onAuthStateChanged(handleAuth);
+    } catch {
+      authStatus.textContent = 'Firebase に接続できませんでした。通信状況を確認し、ページを再読み込みしてください。';
+    }
+  }
+
+  initializeFirebase();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(error => {
+      console.warn('アプリをオフライン用に保存できませんでした。', error);
+    });
   }
 </script>
 </body>
