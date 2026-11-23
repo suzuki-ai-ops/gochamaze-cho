@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>ごちゃまぜ帳</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #edf2ee; color: #172d24; font: 1rem/1.65 system-ui, sans-serif; }
+  main { max-width: 54rem; margin: auto; padding: 1.5rem 1rem 3rem; }
+  h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); margin: 0 0 1rem; }
+  h2 { font-size: 1.25rem; margin: 0 0 .75rem; }
+  h3 { font-size: 1.1rem; margin: .45rem 0; }
+  .panel, article, dialog { background: #fff; border: 1px solid #c9d6cc; border-radius: .85rem; padding: 1rem; }
+  .panel { margin-bottom: 1.25rem; }
+  [hidden] { display: none !important; }
+  label { display: grid; gap: .25rem; min-width: 0; }
+  input, select, button, textarea { font: inherit; color: inherit; border: 1px solid #85988c; border-radius: .45rem; min-height: 44px; padding: .45rem .65rem; background: white; }
+  input, select, textarea { width: 100%; min-width: 0; }
+  textarea { resize: vertical; }
+  select { appearance: none; padding-right: 1.65rem; background: linear-gradient(45deg, transparent 50%, #385047 50%) right .8rem center / .35rem .35rem no-repeat, linear-gradient(135deg, #385047 50%, transparent 50%) right .45rem center / .35rem .35rem no-repeat #fff; }
+  :focus-visible { outline: 3px solid #276e62; outline-offset: 2px; }
+  button, summary { cursor: pointer; }
+  .primary { background: #185747; border-color: #185747; color: white; font-weight: 650; }
+  .actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .75rem; }
+  summary { padding: .55rem 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: .65rem; }
+  .filters { margin-top: .65rem; }
+  #memo-list { display: grid; gap: .75rem; }
+  article { overflow-wrap: anywhere; }
+  article p { margin: .35rem 0; }
+  .body, .note { white-space: pre-wrap; }
+  .muted, small { color: #455c50; }
+  .badge { display: inline-block; background: #e6f0e9; border-radius: .3rem; padding: .05rem .45rem; margin: 0 .35rem .2rem 0; font-size: .875rem; }
+  .error, .danger { color: #942626; }
+  .error:empty, #status:empty { display: none; }
+  dialog { width: min(34rem, calc(100% - 2rem)); max-height: calc(100% - 2rem); color: inherit; }
+  dialog::backdrop { background: #172d2477; }
+  #append-context { overflow-wrap: anywhere; }
+  .backup { margin-top: 1.25rem; }
+  @media (max-width: 420px) {
+    main { padding: 1rem .75rem 2rem; }
+    .panel, article { padding: .8rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>ごちゃまぜ帳</h1>
+  <section id="composer" class="panel" aria-labelledby="composer-heading">
+    <h2 id="composer-heading">メモを書く</h2>
+    <form id="memo-form" novalidate>
+      <label>本文<textarea id="memo-body" rows="4" placeholder="思いついたことをそのまま" aria-required="true" aria-describedby="memo-error" autofocus></textarea></label>
+      <p id="memo-error" class="error" role="alert"></p>
+      <div class="actions">
+        <button id="save" class="primary">保存</button>
+        <button id="cancel-edit" type="button" hidden>編集を取り消す</button>
+      </div>
+      <details id="metadata">
+        <summary>タイトル・分類など（任意）</summary>
+        <div class="grid">
+          <label>タイトル<input id="title"></label>
+          <label>カテゴリ<select id="category"></select></label>
+          <label id="custom-category-field" hidden>新しいカテゴリ名<input id="custom-category"></label>
+          <label>タグ（カンマ区切り）<input id="tags"></label>
+          <label>好き度<select id="rating"><option value="">未評価</option><option>◎</option><option>○</option><option>△</option></select></label>
+          <label>一言メモ<input id="note"></label>
+        </div>
+      </details>
+    </form>
+  </section>
+  <p id="status" role="status"></p>
+  <section aria-labelledby="list-heading">
+    <div class="panel">
+      <h2 id="list-heading">メモ一覧</h2>
+      <label>キーワード検索<input id="query" type="search" placeholder="タイトル・本文"></label>
+      <div class="grid filters">
+        <label>カテゴリで絞り込む<select id="filter-category"></select></label>
+        <label>タグで絞り込む<select id="filter-tag"></select></label>
+        <label>好き度で絞り込む<select id="filter-rating"></select></label>
+      </div>
+    </div>
+    <p id="count" class="muted" aria-live="polite"></p>
+    <div id="memo-list"></div>
+  </section>
+  <section class="panel backup" aria-labelledby="backup-heading">
+    <h2 id="backup-heading">バックアップ</h2>
+    <p class="muted">同じIDのメモは読み込むJSONの内容を優先します。</p>
+    <div class="actions">
+      <button id="export">JSONを書き出す</button>
+      <button id="import">JSONを読み込む</button>
+      <input id="import-file" type="file" accept=".json,application/json" hidden aria-label="読み込むJSONファイル">
+    </div>
+    <p id="backup-status" role="status"></p>
+  </section>
+</main>
+<dialog id="append-dialog" aria-labelledby="append-heading">
+  <form id="append-form" novalidate>
+    <h2 id="append-heading">本文に追記</h2>
+    <p id="append-context"></p>
+    <label>追記する内容<textarea id="append-body" rows="4" aria-required="true" aria-describedby="append-error" autofocus></textarea></label>
+    <p id="append-error" class="error" role="alert"></p>
+    <div class="actions">
+      <button class="primary">追記を保存</button>
+      <button id="cancel-append" type="button">取り消す</button>
+    </div>
+  </form>
+</dialog>
+<script>
+  'use strict';
+
+  const storageKey = 'gochamaze-cho:v1';
+  const defaultCategories = ['未分類', 'ダジャレ', '愚痴', '考えごと', 'ネタ', 'キャラ', 'スタンプ', 'note', '事業', 'その他'];
+  const ratings = ['', '◎', '○', '△'];
+  const initialMemos = [
+    {
+      "id": "initial-1",
+      "title": "アルミ・カン",
+      "body": "アルミ缶の上にミカンが乗ったキャラクター。名前そのものがダジャレ（アルミ缶×ミカン＝未完）。思いついたダジャレをつい言ってしまう。ダジャレが好きな理由は「だれも傷つけないから」。かわいくなくてよい、ネタキャラ。写実的なミカンと、へこみ・傷のあるリアルな缶。",
+      "category": "キャラ",
+      "tags": [
+        "ダジャレ",
+        "ブタコと博士"
+      ],
+      "rating": "◎",
+      "note": ""
+    },
+    {
+      "id": "initial-2",
+      "title": "アルミ・カンのハードボイルド設定",
+      "body": "多くを語らず行動で見せる。セリフは短く乾いたもの。恩を売らず、去り際は後ろ姿。へこみや傷は勲章として隠さない。新品のきれいな缶にしない。くたびれた渋さ、かわいさに寄せない。",
+      "category": "キャラ",
+      "tags": [
+        "アルミ・カン",
+        "設定"
+      ],
+      "rating": "",
+      "note": ""
+    },
+    {
+      "id": "initial-3",
+      "title": "アルミ・カン第2話「凹んでたって」",
+      "body": "凹んでいる人を見つける→「俺だって凹む時はあるさ」→ミカンを横に置く→「ふんっ」と自分も凹む→「凹んでたって、新鮮な空気が入れば治るものさ」→ミカンを戻して後ろ姿で去る。全6枚。2026-11-23にXへ投稿済み。",
+      "category": "キャラ",
+      "tags": [
+        "アルミ・カン",
+        "あらすじ"
+      ],
+      "rating": "",
+      "note": ""
+    },
+    {
+      "id": "initial-4",
+      "title": "コンサル用語スタンプ",
+      "body": "「論点は？」「視座低くない？」「KPI定めてる？」など、コンサルが会議で使う決めゼリフ24個のスタンプ。黒×赤、キーワードを赤く大きく、文字メインの実用型。2026-11-22に審査申請済み（190円）。",
+      "category": "スタンプ",
+      "tags": [
+        "LINEスタンプ",
+        "決めゼリフ"
+      ],
+      "rating": "",
+      "note": ""
+    },
+    {
+      "id": "initial-5",
+      "title": "逆質問は最後の自己PRチャンス",
+      "body": "逆質問の時間は「知りたいことを聞く場」ではなく、面接最後のアピールチャンス。「御社で活躍している人の共通点は？」と聞き、返ってきた答えに自分の共通点を具体的な行動つきで返す。F02（無料note）の核。",
+      "category": "note",
+      "tags": [
+        "就活戦略室",
+        "F02"
+      ],
+      "rating": "",
+      "note": ""
+    },
+    {
+      "id": "initial-6",
+      "title": "二問ワーク",
+      "body": "ガクチカを二つの問いで整理するWebツール。Q1「どんな課題に、どう判断して動いた？」＝能力として伝わる側面。Q2「なぜ、その課題を放っておけなかった？」＝人柄として伝わる側面。有料noteへの導線も兼ねる。",
+      "category": "note",
+      "tags": [
+        "就活戦略室",
+        "Webツール"
+      ],
+      "rating": "",
+      "note": ""
+    },
+    {
+      "id": "initial-7",
+      "title": "第三の柱の候補",
+      "body": "A＝中小・個人向けAI業務自動化サービス（本命）、C＝AIデータ分析・レポート代行、B＝ニッチ業界向けAIツール月額（実顧客の課題が見えるまで保留）。並行して無在庫販売／ドロップシッピングも探索候補。",
+      "category": "事業",
+      "tags": [
+        "副業方針ver3"
+      ],
+      "rating": "",
+      "note": ""
+    },
+    {
+      "id": "initial-8",
+      "title": "AIショート動画のハイブリッド制作法",
+      "body": "固定原画＋AI動画は要所だけ、残りは静止画アニメ・字幕・音声・編集で作る。ChatGPT×Google Flow（Veo）×VOICEVOX×CapCut。約30秒中AI生成は5〜10秒だけ。",
+      "category": "事業",
+      "tags": [
+        "ブタコと博士",
+        "動画"
+      ],
+      "rating": "",
+      "note": ""
+    }
+  ];
+  const $ = id => document.getElementById(id);
+  const memoForm = $('memo-form');
+  const memoBody = $('memo-body');
+  const category = $('category');
+  const customCategory = $('custom-category');
+  const filterCategory = $('filter-category');
+  const filterTag = $('filter-tag');
+  const filterRating = $('filter-rating');
+  const appendDialog = $('append-dialog');
+  const dateFormat = new Intl.DateTimeFormat('ja-JP', {dateStyle: 'medium', timeStyle: 'short'});
+  let data;
+  let editingId = null;
+  let appendingId = null;
+
+  function storeData(next) {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+      data = next;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function initialize() {
+    const stored = localStorage.getItem(storageKey);
+    if (stored !== null) {
+      data = parseBackup(stored);
+      return;
+    }
+    const now = Date.now();
+    const memos = initialMemos.map((memo, index) => {
+      const timestamp = new Date(now - index).toISOString();
+      return {...memo, createdAt: timestamp, updatedAt: timestamp};
+    });
+    if (!storeData({version: 1, categories: [], memos})) throw new Error('storage');
+  }
+
+  function parseBackup(source) {
+    const backup = JSON.parse(source);
+    if (backup?.version !== 1 || !Array.isArray(backup.memos) ||
+        !Array.isArray(backup.categories) || !backup.categories.every(validText)) {
+      throw new Error('backup');
+    }
+    const fields = ['id', 'title', 'body', 'category', 'rating', 'note', 'createdAt', 'updatedAt'];
+    for (const memo of backup.memos) {
+      if (!memo || !fields.every(field => typeof memo[field] === 'string') ||
+          !validText(memo.id) || !validText(memo.body) || !validText(memo.category) ||
+          !ratings.includes(memo.rating) || !Array.isArray(memo.tags) || !memo.tags.every(validText) ||
+          !Number.isFinite(Date.parse(memo.createdAt)) || !Number.isFinite(Date.parse(memo.updatedAt))) {
+        throw new Error('memo');
+      }
+    }
+    return backup;
+  }
+
+  function validText(value) {
+    return typeof value === 'string' && value.trim() !== '';
+  }
+
+  function options(select, choices) {
+    const previous = select.selectedIndex < 0 ? null : select.value;
+    select.replaceChildren(...choices.map(([value, label]) => new Option(label, value)));
+    if (choices.some(([value]) => value === previous)) select.value = previous;
+  }
+
+  function categoryOptions() {
+    return [...new Set([...defaultCategories, ...data.categories, ...data.memos.map(memo => memo.category)])];
+  }
+
+  function refreshOptions() {
+    const categories = categoryOptions();
+    const categoryChoices = categories.map(name => ['category:' + name, name]);
+    const tags = [...new Set(data.memos.flatMap(memo => memo.tags))].sort((a, b) => a.localeCompare(b, 'ja'));
+    options(category, [...categoryChoices, ['custom', '新しいカテゴリを追加']]);
+    options(filterCategory, [['', 'すべて'], ...categoryChoices]);
+    options(filterTag, [['', 'すべて'], ...tags.map(tag => [tag, tag])]);
+    options(filterRating, [['all', 'すべて'], ...ratings.map(rating => [rating, rating || '未評価'])]);
+    toggleCustomCategory();
+  }
+
+  function toggleCustomCategory() {
+    const adding = category.value === 'custom';
+    $('custom-category-field').hidden = !adding;
+  }
+
+  function element(tag, text, className) {
+    const node = document.createElement(tag);
+    node.textContent = text;
+    if (className) node.className = className;
+    return node;
+  }
+
+  function action(label, handler, className) {
+    const button = element('button', label, className);
+    button.type = 'button';
+    button.addEventListener('click', handler);
+    return button;
+  }
+
+  function displayTitle(memo) {
+    if (memo.title) return memo.title;
+    const start = Array.from(memo.body.trim().split(/\r?\n/, 1)[0]);
+    return start.slice(0, 42).join('') + (start.length > 42 ? '…' : '');
+  }
+
+  function dateLine(label, timestamp) {
+    const time = element('time', dateFormat.format(new Date(timestamp)));
+    time.dateTime = timestamp;
+    const line = element('div', label + ' ');
+    line.append(time);
+    return line;
+  }
+
+  function memoCard(memo) {
+    const card = document.createElement('article');
+    const chips = document.createElement('div');
+    chips.append(element('span', memo.category, 'badge'), element('span', memo.rating || '未評価', 'badge'));
+    for (const tag of memo.tags) chips.append(element('span', '#' + tag, 'badge'));
+    card.append(chips, element('h3', displayTitle(memo)), element('p', memo.body, 'body'));
+    if (memo.note) card.append(element('p', '一言メモ　' + memo.note, 'note'));
+    const dates = element('div', '', 'muted');
+    dates.append(dateLine('作成', memo.createdAt), dateLine('更新', memo.updatedAt));
+    const actions = element('div', '', 'actions');
+    actions.append(
+      action('追記', () => startAppend(memo)),
+      action('編集', () => startEdit(memo)),
+      action('削除', () => deleteMemo(memo), 'danger')
+    );
+    card.append(dates, actions);
+    return card;
+  }
+
+  function renderList() {
+    const query = $('query').value.trim().toLowerCase();
+    const memos = data.memos.filter(memo =>
+      (!filterCategory.value || 'category:' + memo.category === filterCategory.value) &&
+      (!filterTag.value || memo.tags.includes(filterTag.value)) &&
+      (filterRating.value === 'all' || memo.rating === filterRating.value) &&
+      (memo.title.toLowerCase().includes(query) || memo.body.toLowerCase().includes(query))
+    ).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    $('count').textContent = memos.length + '件';
+    $('memo-list').replaceChildren(...memos.map(memoCard));
+    if (!memos.length) $('memo-list').append(element('p', '表示するメモがありません。', 'muted'));
+  }
+
+  function resetComposer() {
+    editingId = null;
+    memoForm.reset();
+    category.value = 'category:未分類';
+    $('metadata').open = false;
+    $('composer-heading').textContent = 'メモを書く';
+    $('save').textContent = '保存';
+    $('cancel-edit').hidden = true;
+    $('memo-error').textContent = '';
+    memoBody.removeAttribute('aria-invalid');
+    toggleCustomCategory();
+  }
+
+  function startEdit(memo) {
+    editingId = memo.id;
+    memoBody.value = memo.body;
+    $('title').value = memo.title;
+    category.value = 'category:' + memo.category;
+    customCategory.value = '';
+    $('tags').value = memo.tags.join(', ');
+    $('rating').value = memo.rating;
+    $('note').value = memo.note;
+    $('metadata').open = true;
+    $('composer-heading').textContent = 'メモを編集';
+    $('save').textContent = '変更を保存';
+    $('cancel-edit').hidden = false;
+    $('memo-error').textContent = '';
+    memoBody.removeAttribute('aria-invalid');
+    toggleCustomCategory();
+    memoBody.focus();
+    $('composer').scrollIntoView({block: 'start'});
+  }
+
+  function startAppend(memo) {
+    appendingId = memo.id;
+    $('append-context').textContent = displayTitle(memo);
+    $('append-body').value = '';
+    $('append-error').textContent = '';
+    appendDialog.showModal();
+  }
+
+  function updateMemo(memo, nextMemo) {
+    return data.memos.map(item => item.id === memo.id ? nextMemo : item);
+  }
+
+  function deleteMemo(memo) {
+    if (!confirm('「' + displayTitle(memo) + '」を削除しますか？')) return;
+    if (!storeData({...data, memos: data.memos.filter(item => item.id !== memo.id)})) {
+      $('status').textContent = '削除を保存できませんでした。';
+      return;
+    }
+    if (editingId === memo.id) resetComposer();
+    refreshOptions();
+    renderList();
+    $('status').textContent = 'メモを削除しました。';
+  }
+
+  memoForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const error = $('memo-error');
+    if (!data) return;
+    if (!validText(memoBody.value)) {
+      error.textContent = '本文を入力してください。';
+      memoBody.setAttribute('aria-invalid', 'true');
+      memoBody.focus();
+      return;
+    }
+    memoBody.removeAttribute('aria-invalid');
+    const adding = category.value === 'custom';
+    const selectedCategory = adding ? customCategory.value.trim() : category.value.slice('category:'.length);
+    const categoryName = selectedCategory || '未分類';
+    const previous = data.memos.find(memo => memo.id === editingId);
+    const now = new Date().toISOString();
+    const memo = {
+      id: previous?.id ?? Array.from(crypto.getRandomValues(new Uint32Array(4)), value => value.toString(16).padStart(8, '0')).join(''),
+      title: $('title').value.trim(),
+      body: memoBody.value,
+      category: categoryName,
+      tags: [...new Set($('tags').value.split(/[,、，]/).map(tag => tag.trim()).filter(Boolean))],
+      rating: $('rating').value,
+      note: $('note').value,
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now
+    };
+    const memos = previous ? updateMemo(previous, memo) : [memo, ...data.memos];
+    const categories = adding && !categoryOptions().includes(categoryName) ? [...data.categories, categoryName] : data.categories;
+    if (!storeData({...data, categories, memos})) {
+      error.textContent = '保存できませんでした。ブラウザの保存設定や空き容量を確認してください。';
+      return;
+    }
+    refreshOptions();
+    resetComposer();
+    renderList();
+    $('status').textContent = previous ? '変更を保存しました。' : 'メモを保存しました。';
+    memoBody.focus();
+  });
+
+  $('append-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const input = $('append-body');
+    const error = $('append-error');
+    if (!validText(input.value)) {
+      error.textContent = '追記する内容を入力してください。';
+      input.focus();
+      return;
+    }
+    const memo = data.memos.find(item => item.id === appendingId);
+    if (!memo) return;
+    const nextMemo = {...memo, body: memo.body + '\n\n' + input.value, updatedAt: new Date().toISOString()};
+    if (!storeData({...data, memos: updateMemo(memo, nextMemo)})) {
+      error.textContent = '追記を保存できませんでした。';
+      return;
+    }
+    if (editingId === memo.id) {
+      memoBody.value += '\n\n' + input.value;
+    }
+    appendDialog.close();
+    renderList();
+    $('status').textContent = '追記を保存しました。';
+  });
+
+  category.addEventListener('change', () => {
+    toggleCustomCategory();
+    if (category.value === 'custom') customCategory.focus();
+  });
+  $('cancel-edit').addEventListener('click', () => {
+    resetComposer();
+    memoBody.focus();
+  });
+  $('cancel-append').addEventListener('click', () => appendDialog.close());
+  for (const select of [filterCategory, filterTag, filterRating]) select.addEventListener('change', renderList);
+  $('query').addEventListener('input', renderList);
+
+  $('export').addEventListener('click', () => {
+    if (!data) return;
+    const blob = new Blob([JSON.stringify(data, null, 2) + '\n'], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'gochamaze-cho.json';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    $('backup-status').textContent = data.memos.length + '件を書き出しました。';
+  });
+
+  const importFile = $('import-file');
+  $('import').addEventListener('click', () => importFile.click());
+  importFile.addEventListener('change', async () => {
+    const file = importFile.files[0];
+    importFile.value = '';
+    if (!file || !data) return;
+    const status = $('backup-status');
+    let incoming;
+    try {
+      incoming = parseBackup(await file.text());
+    } catch {
+      status.textContent = '読み込めませんでした。ごちゃまぜ帳から書き出したJSONを選んでください。';
+      return;
+    }
+    const memos = new Map(data.memos.map(memo => [memo.id, memo]));
+    for (const memo of incoming.memos) memos.set(memo.id, memo);
+    const categories = [...new Set([...data.categories, ...incoming.categories])];
+    if (!storeData({...data, categories, memos: [...memos.values()]})) {
+      status.textContent = '読み込んだデータを保存できませんでした。';
+      return;
+    }
+    if (incoming.memos.some(memo => memo.id === editingId)) resetComposer();
+    refreshOptions();
+    renderList();
+    status.textContent = incoming.memos.length + '件を読み込みました。';
+  });
+
+  try {
+    initialize();
+    refreshOptions();
+    renderList();
+  } catch {
+    $('status').textContent = '保存データを開けませんでした。ブラウザの保存設定を確認してください。';
+    for (const control of document.querySelectorAll('button, input, textarea, select')) control.disabled = true;
+  }
+</script>
+</body>
+</html>
