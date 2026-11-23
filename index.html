@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; base-uri 'none'; form-action 'none'">
 <title>ごちゃまぜ帳</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; background: #edf2ee; color: #172d24; font: 1rem/1.65 system-ui, sans-serif; }
-  main { max-width: 54rem; margin: auto; padding: 1.5rem 1rem 3rem; }
-  h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); margin: 0 0 1rem; }
+  body { margin: 0; background: radial-gradient(ellipse at top left, #fff0cf, transparent 40rem), #faf5ed; color: #2d2638; font: 1rem/1.65 system-ui, sans-serif; }
+  main { max-width: 58rem; margin: auto; padding: 1.5rem 1rem 3rem; }
+  h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); margin: 0; letter-spacing: -.045em; }
   h2 { font-size: 1.25rem; margin: 0 0 .75rem; }
   h3 { font-size: 1.1rem; margin: .45rem 0; }
-  .panel, article, dialog { background: #fff; border: 1px solid #c9d6cc; border-radius: .85rem; padding: 1rem; }
+  .panel, article, dialog { background: #fff; border: 1px solid #e8dfd5; border-radius: 1.2rem; padding: 1.25rem; box-shadow: 0 5px 18px #432c2210; }
   .panel { margin-bottom: 1.25rem; }
   [hidden] { display: none !important; }
   label { display: grid; gap: .25rem; min-width: 0; }
@@ -22,7 +22,7 @@
   select { appearance: none; padding-right: 1.65rem; background: linear-gradient(45deg, transparent 50%, #385047 50%) right .8rem center / .35rem .35rem no-repeat, linear-gradient(135deg, #385047 50%, transparent 50%) right .45rem center / .35rem .35rem no-repeat #fff; }
   :focus-visible { outline: 3px solid #276e62; outline-offset: 2px; }
   button, summary { cursor: pointer; }
-  .primary { background: #185747; border-color: #185747; color: white; font-weight: 650; }
+  .primary { background: #593ca5; border-color: #593ca5; color: white; font-weight: 650; }
   .actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .75rem; }
   summary { padding: .55rem 0; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: .65rem; }
@@ -39,6 +39,31 @@
   dialog::backdrop { background: #172d2477; }
   #append-context { overflow-wrap: anywhere; }
   .backup { margin-top: 1.25rem; }
+  header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: 0 0 1.1rem; }
+  #total { background: #ede5fd; color: #44307c; border-radius: 2rem; padding: .35rem .85rem; font-weight: 650; }
+  #composer { border-color: #d9c9fa; box-shadow: 0 8px 26px #593ca519; }
+  #memo-body { background: #fcfaff; border: 2px solid #b6a2e1; min-height: 8.5rem; font-size: 1.1rem; }
+  #save { min-width: min(100%, 11rem); min-height: 50px; }
+  button:hover:not(:disabled) { box-shadow: inset 0 0 0 2px #593ca530; }
+  button:disabled { opacity: .65; }
+  article { border-inline-start: .45rem solid hsl(var(--hue) 47% 48%); }
+  .category-badge { background: hsl(var(--hue) 76% 91%); color: hsl(var(--hue) 48% 24%); }
+  .new-memo { animation: appear .32s ease-out; }
+  @keyframes appear { from { opacity: 0; transform: translateY(8px); } }
+  @media (prefers-reduced-motion: reduce) { .new-memo { animation: none; } }
+  #status:not(:empty) { position: fixed; z-index: 1; inset: auto 1rem 1rem auto; max-width: calc(100% - 2rem); margin: 0; padding: .65rem 1rem; border-radius: .85rem; background: #372856; color: white; box-shadow: 0 4px 16px #32214c44; pointer-events: none; }
+  .warning { color: #744200; background: #fff0ce; padding: .65rem .85rem; border-radius: .6rem; }
+  .files { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; list-style: none; padding: 0; }
+  .files li { max-width: 100%; overflow-wrap: anywhere; }
+  .files a { display: inline-block; padding: .55rem; color: #483380; }
+  .thumbnail { padding: .2rem; display: block; }
+  .thumbnail img { display: block; width: 5.5rem; height: 4.5rem; object-fit: cover; border-radius: .3rem; }
+  #preview-image { display: block; max-width: 100%; max-height: 65vh; margin: 0 auto; }
+  .empty { padding: 1.5rem; text-align: center; background: #fffaf4; border: 1px dashed #bcab9d; border-radius: 1rem; }
+  #dashboard { overflow-wrap: anywhere; }
+  #dashboard summary { font-weight: 700; }
+  #dashboard ul { padding-inline-start: 1.25rem; margin: .25rem 0; }
+  #today p { white-space: pre-wrap; }
   @media (max-width: 420px) {
     main { padding: 1rem .75rem 2rem; }
     .panel, article { padding: .8rem; }
@@ -47,7 +72,10 @@
 </head>
 <body>
 <main>
-  <h1>ごちゃまぜ帳</h1>
+  <header>
+    <h1>ごちゃまぜ帳</h1>
+    <span id="total" aria-live="polite"></span>
+  </header>
   <section id="composer" class="panel" aria-labelledby="composer-heading">
     <h2 id="composer-heading">メモを書く</h2>
     <form id="memo-form" novalidate>
@@ -57,6 +85,13 @@
         <button id="save" class="primary">保存</button>
         <button id="cancel-edit" type="button" hidden>編集を取り消す</button>
       </div>
+      <details id="attachments">
+        <summary>ファイル添付（任意）</summary>
+        <label>ファイルを選択<input id="attachment-input" type="file" multiple aria-describedby="attachment-help attachment-error"></label>
+        <small id="attachment-help">画像は自動で圧縮します。その他のファイルは1件2 MBまでです。</small>
+        <p id="attachment-error" class="error" role="alert"></p>
+        <ul id="draft-files" class="files" aria-label="選択した添付ファイル" hidden></ul>
+      </details>
       <details id="metadata">
         <summary>タイトル・分類など（任意）</summary>
         <div class="grid">
@@ -71,6 +106,17 @@
     </form>
   </section>
   <p id="status" role="status"></p>
+  <p id="storage-warning" class="warning" role="status" hidden>ブラウザの保存容量（目安5 MB）に近づいています。添付を減らすと空き容量を確保できます。</p>
+  <details id="dashboard" class="panel">
+    <summary>ダッシュボード</summary>
+    <p id="activity"></p>
+    <div class="grid">
+      <section><h3>カテゴリ別</h3><ul id="category-totals"></ul></section>
+      <section><h3>好き度別</h3><ul id="rating-totals"></ul></section>
+      <section><h3>よく使うタグ</h3><ul id="top-tags"></ul></section>
+    </div>
+    <section id="today"><h3>今日のごちゃまぜ</h3><strong id="today-title"></strong><p id="today-body"></p></section>
+  </details>
   <section aria-labelledby="list-heading">
     <div class="panel">
       <h2 id="list-heading">メモ一覧</h2>
@@ -106,6 +152,11 @@
       <button id="cancel-append" type="button">取り消す</button>
     </div>
   </form>
+</dialog>
+<dialog id="preview" aria-labelledby="preview-heading">
+  <h2 id="preview-heading">画像のプレビュー</h2>
+  <img id="preview-image" alt="">
+  <form method="dialog" class="actions"><button autofocus>閉じる</button></form>
 </dialog>
 <script>
   'use strict';
@@ -223,11 +274,37 @@
   let data;
   let editingId = null;
   let appendingId = null;
+  let draftFiles = [];
+  let processingFiles = false;
+  let composerRevision = 0;
+  let toastTimer;
+  let todayDate;
+  let todayMemoId;
+  const fileLimit = 2 * 1024 * 1024;
+  const storageWarningThreshold = 4 * 1024 * 1024;
+  const storageAdvice = '添付を減らすか、ブラウザの保存設定や空き容量を確認してください。';
+  const jpegPrefix = 'data:image/jpeg;base64,';
+  const filePrefix = 'data:application/octet-stream;base64,';
+  const attachmentInput = $('attachment-input');
+  const preview = $('preview');
+
+  function updateStorageWarning(serialized) {
+    // UTF-16でのサイズを目安にし、ブラウザごとの上限差を見込んで早めに知らせる。
+    $('storage-warning').hidden = serialized.length * 2 < storageWarningThreshold;
+  }
+
+  function notify(message) {
+    clearTimeout(toastTimer);
+    $('status').textContent = message;
+    toastTimer = setTimeout(() => { $('status').textContent = ''; }, 3500);
+  }
 
   function storeData(next) {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(next));
+      const serialized = JSON.stringify(next);
+      localStorage.setItem(storageKey, serialized);
       data = next;
+      updateStorageWarning(serialized);
       return true;
     } catch {
       return false;
@@ -238,6 +315,7 @@
     const stored = localStorage.getItem(storageKey);
     if (stored !== null) {
       data = parseBackup(stored);
+      updateStorageWarning(stored);
       return;
     }
     const now = Date.now();
@@ -259,6 +337,7 @@
       if (!memo || !fields.every(field => typeof memo[field] === 'string') ||
           !validText(memo.id) || !validText(memo.body) || !validText(memo.category) ||
           !ratings.includes(memo.rating) || !Array.isArray(memo.tags) || !memo.tags.every(validText) ||
+          ('attachments' in memo && (!Array.isArray(memo.attachments) || !memo.attachments.every(validAttachment))) ||
           !Number.isFinite(Date.parse(memo.createdAt)) || !Number.isFinite(Date.parse(memo.updatedAt))) {
         throw new Error('memo');
       }
@@ -269,6 +348,95 @@
   function validText(value) {
     return typeof value === 'string' && value.trim() !== '';
   }
+
+  function validAttachment(file) {
+    if (!file || !validText(file.name) || typeof file.image !== 'boolean' || typeof file.data !== 'string') return false;
+    const prefix = file.image ? jpegPrefix : filePrefix;
+    if (!file.data.startsWith(prefix)) return false;
+    const base64 = file.data.slice(prefix.length);
+    if (base64.length % 4 || /[^A-Za-z0-9+/=]/.test(base64)) return false;
+    const padding = base64.endsWith('==') ? 2 : Number(base64.endsWith('='));
+    if (base64.indexOf('=') !== (padding ? base64.length - padding : -1)) return false;
+    return file.image ? base64.startsWith('/9j/') : base64.length * 3 / 4 - padding <= fileLimit;
+  }
+
+  function readBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener('load', () => resolve(reader.result.split(',')[1]));
+      reader.addEventListener('error', () => reject(reader.error));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function compressImage(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      const scale = Math.min(1, 1280 / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#fff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const compressed = canvas.toDataURL('image/jpeg', .82);
+      if (!compressed.startsWith(jpegPrefix)) throw new Error('image');
+      return compressed;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function renderDraftFiles() {
+    const list = $('draft-files');
+    list.hidden = !draftFiles.length;
+    list.replaceChildren(...draftFiles.map((file, index) => {
+      const item = element('li', '');
+      item.append(action(file.name + ' を外す', () => {
+        draftFiles.splice(index, 1);
+        renderDraftFiles();
+      }));
+      return item;
+    }));
+  }
+
+  attachmentInput.addEventListener('change', async () => {
+    const files = Array.from(attachmentInput.files);
+    attachmentInput.value = '';
+    if (!files.length || processingFiles) return;
+    const revision = composerRevision;
+    const error = $('attachment-error');
+    const errors = [];
+    error.textContent = '';
+    processingFiles = attachmentInput.disabled = $('save').disabled = true;
+    try {
+      for (const file of files) {
+        if (revision !== composerRevision) break;
+        const image = file.type.startsWith('image/') ||
+          /\.(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)$/i.test(file.name);
+        if (!image && file.size > fileLimit) {
+          errors.push(file.name + ' は2 MBを超えています。');
+          continue;
+        }
+        try {
+          const content = image ? await compressImage(file) : filePrefix + await readBase64(file);
+          if (revision === composerRevision) draftFiles.push({name: file.name, image, data: content});
+        } catch {
+          errors.push(file.name + ' を添付できませんでした。ファイルの形式や内容を確認してください。');
+        }
+      }
+      if (revision === composerRevision) {
+        renderDraftFiles();
+        error.textContent = errors.join(' ');
+      }
+    } finally {
+      processingFiles = attachmentInput.disabled = $('save').disabled = false;
+    }
+  });
 
   function options(select, choices) {
     const previous = select.selectedIndex < 0 ? null : select.value;
@@ -324,13 +492,90 @@
     return line;
   }
 
-  function memoCard(memo) {
+  function hashText(text) {
+    let hash = 2166136261;
+    for (const char of text) hash = Math.imul(hash ^ char.codePointAt(0), 16777619);
+    return hash >>> 0;
+  }
+
+  function renderDashboard() {
+    const categories = new Map();
+    const ratingCounts = new Map(ratings.map(rating => [rating || '未評価', 0]));
+    const tags = new Map();
+    const now = Date.now();
+    const cutoff = now - 7 * 24 * 60 * 60 * 1000;
+    let recent = 0;
+    for (const memo of data.memos) {
+      categories.set(memo.category, (categories.get(memo.category) || 0) + 1);
+      const rating = memo.rating || '未評価';
+      ratingCounts.set(rating, ratingCounts.get(rating) + 1);
+      for (const tag of new Set(memo.tags)) tags.set(tag, (tags.get(tag) || 0) + 1);
+      if ([memo.createdAt, memo.updatedAt].some(timestamp => {
+        const time = Date.parse(timestamp);
+        return time >= cutoff && time <= now;
+      })) recent++;
+    }
+    $('total').textContent = '全 ' + data.memos.length + ' 件';
+    $('activity').textContent = '全 ' + data.memos.length + ' 件・直近7日間に追加・更新したメモ ' + recent + ' 件';
+    const topTags = [...tags].sort(([a, countA], [b, countB]) =>
+      countB - countA || a.localeCompare(b, 'ja')).slice(0, 5);
+    for (const [id, counts] of [['category-totals', categories], ['rating-totals', ratingCounts], ['top-tags', topTags]]) {
+      const rows = Array.from(counts, ([name, count]) => element('li', name + '　' + count + '件'));
+      $(id).replaceChildren(...(rows.length ? rows : [element('li', 'なし')]));
+    }
+    const day = new Date(now).toDateString();
+    let today = day === todayDate && data.memos.find(memo => memo.id === todayMemoId);
+    if (!today) {
+      today = data.memos[Math.floor(Math.random() * data.memos.length)];
+      todayDate = day;
+      todayMemoId = today?.id;
+    }
+    $('today-title').textContent = today ? displayTitle(today) : '';
+    $('today-body').textContent = today ? today.body : 'メモを保存すると、ここに1件表示されます。';
+  }
+
+  function attachmentList(files) {
+    const list = element('ul', '', 'files');
+    list.setAttribute('aria-label', '添付ファイル');
+    for (const file of files) {
+      const item = element('li', '');
+      if (file.image) {
+        const button = action('', () => {
+          const image = $('preview-image');
+          image.src = file.data;
+          image.alt = file.name;
+          preview.showModal();
+        }, 'thumbnail');
+        button.setAttribute('aria-label', file.name + ' を拡大');
+        const image = element('img', '');
+        image.src = file.data;
+        image.alt = '';
+        image.loading = 'lazy';
+        button.append(image);
+        item.append(button);
+      } else {
+        const link = element('a', file.name);
+        link.href = file.data;
+        link.download = file.name;
+        item.append(link);
+      }
+      list.append(item);
+    }
+    return list;
+  }
+
+  preview.addEventListener('close', () => $('preview-image').removeAttribute('src'));
+
+  function memoCard(memo, newId) {
     const card = document.createElement('article');
+    card.style.setProperty('--hue', hashText(memo.category) % 360);
+    if (memo.id === newId) card.classList.add('new-memo');
     const chips = document.createElement('div');
-    chips.append(element('span', memo.category, 'badge'), element('span', memo.rating || '未評価', 'badge'));
+    chips.append(element('span', memo.category, 'badge category-badge'), element('span', memo.rating || '未評価', 'badge'));
     for (const tag of memo.tags) chips.append(element('span', '#' + tag, 'badge'));
     card.append(chips, element('h3', displayTitle(memo)), element('p', memo.body, 'body'));
     if (memo.note) card.append(element('p', '一言メモ　' + memo.note, 'note'));
+    if (memo.attachments?.length) card.append(attachmentList(memo.attachments));
     const dates = element('div', '', 'muted');
     dates.append(dateLine('作成', memo.createdAt), dateLine('更新', memo.updatedAt));
     const actions = element('div', '', 'actions');
@@ -343,7 +588,7 @@
     return card;
   }
 
-  function renderList() {
+  function renderList(newId) {
     const query = $('query').value.trim().toLowerCase();
     const memos = data.memos.filter(memo =>
       (!filterCategory.value || 'category:' + memo.category === filterCategory.value) &&
@@ -352,13 +597,18 @@
       (memo.title.toLowerCase().includes(query) || memo.body.toLowerCase().includes(query))
     ).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     $('count').textContent = memos.length + '件';
-    $('memo-list').replaceChildren(...memos.map(memoCard));
-    if (!memos.length) $('memo-list').append(element('p', '表示するメモがありません。', 'muted'));
+    $('memo-list').replaceChildren(...memos.map(memo => memoCard(memo, newId)));
+    if (!memos.length) {
+      const message = data.memos.length ? '条件に合うメモがありません。' : 'まだ何もありません。最初のごちゃまぜをどうぞ。';
+      $('memo-list').append(element('p', message, 'empty'));
+    }
   }
 
   function resetComposer() {
     editingId = null;
     memoForm.reset();
+    setDraftFiles([]);
+    $('attachments').open = false;
     category.value = 'category:未分類';
     $('metadata').open = false;
     $('composer-heading').textContent = 'メモを書く';
@@ -369,8 +619,17 @@
     toggleCustomCategory();
   }
 
+  function setDraftFiles(files) {
+    composerRevision++;
+    draftFiles = [...files];
+    $('attachment-error').textContent = '';
+    renderDraftFiles();
+  }
+
   function startEdit(memo) {
     editingId = memo.id;
+    setDraftFiles(memo.attachments ?? []);
+    $('attachments').open = Boolean(draftFiles.length);
     memoBody.value = memo.body;
     $('title').value = memo.title;
     category.value = 'category:' + memo.category;
@@ -404,19 +663,20 @@
   function deleteMemo(memo) {
     if (!confirm('「' + displayTitle(memo) + '」を削除しますか？')) return;
     if (!storeData({...data, memos: data.memos.filter(item => item.id !== memo.id)})) {
-      $('status').textContent = '削除を保存できませんでした。';
+      notify('削除を保存できませんでした。' + storageAdvice);
       return;
     }
     if (editingId === memo.id) resetComposer();
     refreshOptions();
     renderList();
-    $('status').textContent = 'メモを削除しました。';
+    renderDashboard();
+    notify('メモを削除しました。');
   }
 
   memoForm.addEventListener('submit', event => {
     event.preventDefault();
     const error = $('memo-error');
-    if (!data) return;
+    if (!data || processingFiles) return;
     if (!validText(memoBody.value)) {
       error.textContent = '本文を入力してください。';
       memoBody.setAttribute('aria-invalid', 'true');
@@ -438,18 +698,20 @@
       rating: $('rating').value,
       note: $('note').value,
       createdAt: previous?.createdAt ?? now,
-      updatedAt: now
+      updatedAt: now,
+      attachments: draftFiles
     };
     const memos = previous ? updateMemo(previous, memo) : [memo, ...data.memos];
     const categories = adding && !categoryOptions().includes(categoryName) ? [...data.categories, categoryName] : data.categories;
     if (!storeData({...data, categories, memos})) {
-      error.textContent = '保存できませんでした。ブラウザの保存設定や空き容量を確認してください。';
+      error.textContent = '保存できませんでした。' + storageAdvice;
       return;
     }
     refreshOptions();
     resetComposer();
-    renderList();
-    $('status').textContent = previous ? '変更を保存しました。' : 'メモを保存しました。';
+    renderList(previous ? undefined : memo.id);
+    renderDashboard();
+    notify(previous ? '変更を保存しました。' : 'メモを保存しました。');
     memoBody.focus();
   });
 
@@ -466,7 +728,7 @@
     if (!memo) return;
     const nextMemo = {...memo, body: memo.body + '\n\n' + input.value, updatedAt: new Date().toISOString()};
     if (!storeData({...data, memos: updateMemo(memo, nextMemo)})) {
-      error.textContent = '追記を保存できませんでした。';
+      error.textContent = '追記を保存できませんでした。' + storageAdvice;
       return;
     }
     if (editingId === memo.id) {
@@ -474,7 +736,8 @@
     }
     appendDialog.close();
     renderList();
-    $('status').textContent = '追記を保存しました。';
+    renderDashboard();
+    notify('追記を保存しました。');
   });
 
   category.addEventListener('change', () => {
@@ -488,6 +751,9 @@
   $('cancel-append').addEventListener('click', () => appendDialog.close());
   for (const select of [filterCategory, filterTag, filterRating]) select.addEventListener('change', renderList);
   $('query').addEventListener('input', renderList);
+  $('dashboard').addEventListener('toggle', () => {
+    if (data && $('dashboard').open) renderDashboard();
+  });
 
   $('export').addEventListener('click', () => {
     if (!data) return;
@@ -519,12 +785,13 @@
     for (const memo of incoming.memos) memos.set(memo.id, memo);
     const categories = [...new Set([...data.categories, ...incoming.categories])];
     if (!storeData({...data, categories, memos: [...memos.values()]})) {
-      status.textContent = '読み込んだデータを保存できませんでした。';
+      status.textContent = '読み込んだデータを保存できませんでした。' + storageAdvice;
       return;
     }
     if (incoming.memos.some(memo => memo.id === editingId)) resetComposer();
     refreshOptions();
     renderList();
+    renderDashboard();
     status.textContent = incoming.memos.length + '件を読み込みました。';
   });
 
@@ -532,6 +799,7 @@
     initialize();
     refreshOptions();
     renderList();
+    renderDashboard();
   } catch {
     $('status').textContent = '保存データを開けませんでした。ブラウザの保存設定を確認してください。';
     for (const control of document.querySelectorAll('button, input, textarea, select')) control.disabled = true;
