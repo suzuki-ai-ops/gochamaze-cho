@@ -83,6 +83,13 @@
   </section>
   <p id="status" role="status"></p>
   <div id="memo-app" hidden>
+  <section id="legacy-import-panel" class="panel" hidden>
+    <div id="legacy-import-offer">
+      <p id="legacy-import-count"></p>
+      <button id="legacy-import" class="primary" type="button">クラウドへ取り込む</button>
+    </div>
+    <p id="legacy-import-status" role="status"></p>
+  </section>
   <section id="composer" class="panel" aria-labelledby="composer-heading">
     <h2 id="composer-heading">メモを書く</h2>
     <form id="memo-form" novalidate>
@@ -227,16 +234,14 @@
     const stored = localStorage.getItem(key);
     updateStorageWarning(stored ?? '');
     if (stored !== null) {
-      const {categories, attachments} = JSON.parse(stored);
-      return {categories, attachments: new Map(attachments)};
+      const {categories, attachments, legacyImported} = JSON.parse(stored);
+      return {categories, attachments: new Map(attachments), legacyImported};
     }
-    const legacy = localStorage.getItem(legacyStorageKey);
-    const categories = legacy === null ? [] : JSON.parse(legacy)?.categories;
-    return {categories: Array.isArray(categories) ? categories.filter(validText) : [], attachments: new Map()};
+    return {categories: [], attachments: new Map()};
   }
 
   function storeLocalData(active, local) {
-    const serialized = JSON.stringify({categories: local.categories, attachments: [...local.attachments]});
+    const serialized = JSON.stringify({...local, attachments: [...local.attachments]});
     localStorage.setItem(active.key, serialized);
     active.local = local;
     if (session === active) updateStorageWarning(serialized);
@@ -274,7 +279,7 @@
     }
     const changed = JSON.stringify([...previous.attachments]) !== JSON.stringify([...attachments]) ||
       categories !== previous.categories;
-    if (changed) storeLocalData(active, {categories, attachments});
+    if (changed) storeLocalData(active, {...previous, categories, attachments});
     try {
       await write();
     } catch (error) {
@@ -751,6 +756,78 @@
     $('backup-status').textContent = data.memos.length + '件を書き出しました。';
   });
 
+  function readLegacyBackup() {
+    try {
+      const backup = parseBackup(localStorage.getItem(legacyStorageKey));
+      const encoder = new TextEncoder();
+      if (!backup.memos.length || backup.memos.some(({id}) =>
+        id.includes('/') || id === '.' || id === '..' || /^__.*__$/s.test(id) ||
+        encoder.encode(id).length > 1500
+      )) return;
+      return backup;
+    } catch {
+      // 旧データがない、または壊れている場合は取り込みを案内しない。
+    }
+  }
+
+  function isCurrentSession(active) {
+    return session === active && auth.currentUser?.uid === active.uid;
+  }
+
+  $('legacy-import').addEventListener('click', async () => {
+    const active = activeSession();
+    const backup = active?.legacyBackup;
+    if (!backup) return;
+    const status = $('legacy-import-status');
+    let imported = 0;
+    let skipped = 0;
+    status.textContent = '旧メモを取り込んでいます…';
+    try {
+      await runWrite(active, async () => {
+        for (const memo of backup.memos) {
+          if (!isCurrentSession(active)) return;
+          const ref = active.collection.doc(memo.id);
+          const added = await db.runTransaction(async transaction => {
+            if (!isCurrentSession(active)) throw new Error('session changed');
+            const existing = await transaction.get(ref);
+            if (!isCurrentSession(active)) throw new Error('session changed');
+            if (existing.exists) return false;
+            transaction.set(ref, memoFields(memo));
+            return true;
+          });
+          if (added) imported++;
+          else skipped++;
+        }
+        if (!isCurrentSession(active)) return;
+
+        // 取り込み中に別タブで保存された端末内データも取り込む。
+        const local = readLocalData(active.key);
+        const categories = [...new Set([...local.categories, ...backup.categories])];
+        const attachments = local.attachments;
+        for (const {id, attachments: files} of backup.memos) {
+          if (!files?.length) continue;
+          const merged = [...(attachments.get(id) ?? [])];
+          for (const file of files) {
+            if (!merged.some(existing => existing.name === file.name &&
+                existing.image === file.image && existing.data === file.data)) merged.push(file);
+          }
+          attachments.set(id, merged);
+        }
+        storeLocalData(active, {categories, attachments, legacyImported: true});
+        active.legacyBackup = undefined;
+        renderSnapshot(active);
+      });
+      if (!isCurrentSession(active)) return;
+      $('legacy-import-offer').hidden = true;
+      status.textContent = `${imported}件を取り込みました（${skipped}件は既にあるためスキップ）`;
+    } catch {
+      if (isCurrentSession(active)) {
+        status.textContent = `${imported}件を取り込みました（${skipped}件は既にあるためスキップ）。` +
+          '取り込みを完了できませんでした。通信状況やブラウザの空き容量を確認して、もう一度お試しください。';
+      }
+    }
+  });
+
   const importFile = $('import-file');
   $('import').addEventListener('click', () => importFile.click());
   importFile.addEventListener('change', async () => {
@@ -805,6 +882,10 @@
     $('memo-app').inert = false;
     $('login-panel').hidden = false;
     $('total').hidden = true;
+    $('legacy-import-panel').hidden = true;
+    $('legacy-import-offer').hidden = false;
+    $('legacy-import-count').textContent = '';
+    $('legacy-import-status').textContent = '';
     resetComposer();
     appendDialog.close();
     preview.close();
@@ -839,6 +920,13 @@
     } catch {
       authStatus.textContent = '端末内の保存データを開けませんでした。ブラウザの保存設定を確認してください。';
       return;
+    }
+    if (!active.local.legacyImported) {
+      active.legacyBackup = readLegacyBackup();
+      if (active.legacyBackup) {
+        $('legacy-import-count').textContent = `この端末に旧メモが ${active.legacyBackup.memos.length} 件あります`;
+        $('legacy-import-panel').hidden = false;
+      }
     }
     active.unsubscribe = active.collection.onSnapshot({includeMetadataChanges: true}, snapshot => {
       if (session !== active || auth.currentUser?.uid !== active.uid || (!data && snapshot.metadata.fromCache)) return;
